@@ -4,8 +4,6 @@ import video from "../Model/video.js"
 export const uploadVideo = async (req, res)=>{
   try{
 
-     console.log(req.body)
-   console.log(req.files)
     const {title, description, publish} = req.body
 
 
@@ -72,5 +70,49 @@ export const uploadVideo = async (req, res)=>{
 
   catch(error){
      res.status(500).json({message : "video Uploads errors"})
+  }
+}
+
+
+
+
+
+
+
+
+
+export const showvideo = async (req,res)=>{
+  try{
+    if(req.params.id){
+
+      const videoId = req.params.id;
+      const videoDoc = await video.findById(videoId)
+
+      if(!videoDoc){
+        return res.status(404).json({message : "video not found"})
+      }
+
+      if(videoDoc.publish === "private"){
+        return res.status(404).json({message : "This video is private"})
+      }
+
+      return res.status(200).json({
+        status : 1,
+        msg : ' video used  successfully!',
+        videoDoc
+      })
+    }
+    else {
+      const  videos = await video.find({publish : 'public'})
+
+      return res.status(200).json({
+        status : 1,
+        msg : "public video used successfully!...",
+        videos : videos
+      })
+    }
+  }
+  catch(error){
+    res.status(500).json({message : "video show problem!..."})
   }
 }

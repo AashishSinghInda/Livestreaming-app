@@ -1,5 +1,5 @@
 import express from "express"
-import { uploadVideo } from "../Controllers/videoContollers.js"
+import { showvideo, uploadVideo } from "../Controllers/videoContollers.js"
 import multer from "multer"
 
 let videoRoutes = express.Router()
@@ -13,7 +13,6 @@ let storage = multer.diskStorage({
     filename:function(req,file,cb){
         cb(null,`${Date.now()}-${file.originalname}`)
 
-    //if file.type == viddeo    
 }
 })
 
@@ -22,6 +21,9 @@ const upload1 = multer({storage : storage})
 
 
 videoRoutes.post("/video", upload1.fields([{ name: 'thumImage', maxCount: 1 }, { name: 'video', maxCount: 8 }]), uploadVideo)
+
+videoRoutes.get("/videoshow",showvideo);
+videoRoutes.get("/videoshow/:id",showvideo)
 
 
 export {videoRoutes}

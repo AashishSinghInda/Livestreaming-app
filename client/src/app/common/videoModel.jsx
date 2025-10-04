@@ -15,42 +15,53 @@ import axios from 'axios';
 
 export let Videouploadmodal =({onClose}) => {
       const [publish, setPublish] = useState("public");
-      const [title,setTitle] = useState('')
-      const [description,setDescription] = useState('')
-      const [thumImage,setThumImage] = useState('')
-      const [video,setvideo]  = useState('')
-
-
-      let obj ={
-        title,
-        description,
-        thumImage,
-        video
-      }
-
-      console.log(obj)
+    
 
   let savevideo = (e)=>{
-    console.log(e,"event target")
     e.preventDefault()
+
+
+     const thumInput = e.target.querySelector('input[name="thumImage"]');
+      const videoInput = e.target.querySelector('input[name="video"]');
+
+        if (thumInput.files && thumInput.files[0]) {
+                const thumFile = thumInput.files[0];
+               if (!thumFile.type.startsWith('image/')) {
+                 toast.error("Thumbnail image file (e.g., JPG, PNG, GIF).");
+           return; 
+      }
+    }
+
+    if(videoInput.files && videoInput.files[0]){
+        const videoFile = videoInput.files[0];
+        if(!videoFile.type.startsWith('video/')){
+          toast.error("Video file only (eg. mp4 , AVI, MOV")
+        }
+    }
+
+
+    else{
+      toast.error("Please select a video files.")
+      return
+    }
 
     let formvalue =new FormData(e.target)
      formvalue.append('publish', publish); 
-      console.log(">>>>>>",FormData )
+      
 
       
 
 
     try{
-        console.log(process.env.NEXT_PUBLIC_API_URL,"env url", obj)
-    let res = axios.post(`${process.env.NEXT_PUBLIC_API_URL}/uploads/video`,obj)
-       console.log("res.data>>>>>>", res.data);
+        
+    let res = axios.post(`${process.env.NEXT_PUBLIC_API_URL}/uploads/video`,formvalue)
+      //  console.log("res.data>>>>>>", res.data);
          toast.success("Video uploaded successfully!"); 
         e.target.reset();
         onClose();
   }
   catch(error){
-    console.log("upload failed!...")
+    console.log("upload failed")
   }
 }
 
@@ -64,11 +75,12 @@ export let Videouploadmodal =({onClose}) => {
             </CardHeader>
             <CardContent>
                 <form onSubmit={savevideo}>
-                      <Input type="text" name='title' placeholder='Enter Video Title...' className='border border-gray-400 my-[10px]'  require='Enter Video Title' onChange={(e)=> setTitle(e.target.value)}  value={title.name}/><br />
-                      <Input type="text" name='description' placeholder='Enter Video description...' className='border border-gray-400 my-[10px]'  require='Enter Video description' onChange={(e)=> setDescription(e.target.value)} value={description.name} /><br />
-                        <Input type="file" name='thumImage' placeholder='Upload Video ThumImage...' className='border border-gray-400  my-[10px]' accept="image/*"  onChange={(e)=> setThumImage(e.target.value)}
-                        value = {thumImage.name} />
-                          <Input type="file" name='video' placeholder='Upload Video...' className='border border-gray-400  my-[10px]' required  accept="video/*" onChange={(e)=> setvideo(e.target.value)}  value={video.name} />
+                      <Input type="text" name='title' placeholder='Enter Video Title...' className='border border-gray-400 my-[10px]'  require='Enter Video Title' /><br />
+                      <Input type="text" name='description' placeholder='Enter Video description...' className='border border-gray-400 my-[10px]'  require='Enter Video description'  /><br />
+                       <label>Only Select Thumnail Image</label>
+                        <Input type="file" name='thumImage' placeholder='Upload Video ThumImage...' className='border border-gray-400  my-[10px]' accept="image/*"   />
+                        <label>Only Select video</label>
+                          <Input type="file" name='video' placeholder='Upload Video...' className='border border-gray-400  my-[10px]' required  accept="video/*"/>
                           <RadioGroup defaultValue="public"  onValueChange={setPublish}>
                           <div className="flex items-center space-x-2  mt-[10px]">
                                 <RadioGroupItem value="public" id="public"  />
