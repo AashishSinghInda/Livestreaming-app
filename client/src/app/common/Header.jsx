@@ -10,12 +10,9 @@
   import axios from 'axios';
   import { toast, ToastContainer } from 'react-toastify';
 import { Videouploadmodal } from './videoModel';
-  //import { Card, CardContent, CardHeader } from '@/components/ui/card';
-  //import { Input } from '@/components/ui/input';
-  //import {
-   // RadioGroup,
-    //RadioGroupItem,
-  //} from "@/components/ui/radio-group"
+import Link from 'next/link';
+
+  
 
 
   export default function Header() {
@@ -25,6 +22,8 @@ import { Videouploadmodal } from './videoModel';
     const [position, setPosition] = useState("bottom")
     const [show, setShow] = useState(false)
     const [showUploadModal, setShowUploadModal] = useState(false);
+    const [isLoggedIn, setIsLoggedIn] = useState(false)
+    const [open , setOpen] =  useState(false)
   
     useEffect(()=>{
       let accessToken = localStorage.getItem("accessToken")
@@ -32,9 +31,39 @@ import { Videouploadmodal } from './videoModel';
 
       if(!accessToken && !refreshToken){
         setShow(true)
+        setIsLoggedIn(false)
+      }
+      else{
+        setShow(false)
+        setIsLoggedIn(true)
       }
 
     },[]) 
+
+   
+
+   const handleCreateClick = ()=>{
+    
+    if(!isLoggedIn){
+      toast.error("Please log in create videos or go live!");
+       setOpen(false); 
+      setTimeout(()=>{
+        router.push('login')
+      },4000)
+        return
+
+    }}
+
+
+   const handleOpenChange = (newOpen)=>{
+     if(!isLoggedIn && newOpen){
+      setOpen(false)
+      handleCreateClick()
+     }
+     else {
+      setOpen(newOpen);
+    }}
+    
     
     
 
@@ -42,7 +71,7 @@ import { Videouploadmodal } from './videoModel';
       try{
           let userId = localStorage.getItem("userId")
 
-          await  fetch.post(`${process.env.NEXT_PUBLIC_API_URL}/auth/logout`,{userId})
+          await  axios.post(`${process.env.NEXT_PUBLIC_API_URL}/auth/logout`,{userId})
 
           localStorage.removeItem('userInfo')
           localStorage.removeItem('accessToken')
@@ -50,6 +79,10 @@ import { Videouploadmodal } from './videoModel';
             localStorage.removeItem('userId')
 
           toast.success("logout Successfully!...")
+
+            setOpen(false);
+            setShow(true);
+               setIsLoggedIn(false);
 
           setTimeout(()=>{
             router.push('/login')
@@ -81,17 +114,17 @@ import { Videouploadmodal } from './videoModel';
             {/* dropdown div */}
               
             <div className=' cursor-pointer'>
-              <DropdownMenu>
+              <DropdownMenu open={open} onOpenChange={handleOpenChange}>
                     <DropdownMenuTrigger asChild>
-                    <Button variant="outline" className='cursor-pointer'>+ Create</Button>
+                    <Button variant="outline" className='cursor-pointer' onClick={handleCreateClick}>+ Create</Button>
               </DropdownMenuTrigger>
                 <DropdownMenuContent className="w-56">
           <DropdownMenuLabel>Create video</DropdownMenuLabel>
                 <DropdownMenuRadioGroup value={position} onValueChange={setPosition}>
-               `` <DropdownMenuRadioItem value="Upload" onSelect={() => setShowUploadModal(true)}>
+                <DropdownMenuRadioItem value="Upload" onSelect={() => setShowUploadModal(true)}>
                   upload
                 </DropdownMenuRadioItem>
-            <DropdownMenuRadioItem value="GoLive">GoLive</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="GoLive"><Link href={'/broadcaster'}> GoLive </Link></DropdownMenuRadioItem>
           </DropdownMenuRadioGroup>
           </DropdownMenuContent>
               </DropdownMenu>
@@ -120,64 +153,3 @@ import { Videouploadmodal } from './videoModel';
 
 
 
- /* let Videouploadmodal =({onClose}) => {
-      const [publish, setPublish] = useState("public");
-
-  let savevideo = (e)=>{
-    e.preventDefault()
-
-    let formvalue =new FormData(e.target)
-     formvalue.append('publish', publish); 
-
-
-    try{
-    let res = axios.post(`${process.env.NEXT_PUBLIC_API_URL}/uploads/video`,formvalue)
-       console.log(res.data);
-         toast.success("Video uploaded successfully!"); 
-      e.target.reset();
-       onClose();
-  }
-  catch(error){
-    console.log("upload failed!...")
-  }
-}
-
-    return(
-      <>
-        
-      <div className='flex justify-center  items-center h-screen bg-opacity-50  '>
-        <Card className='w-[500px] relative'>
-            <CardHeader className='text-2xl font-bold text-center flex justify-between items-center '>Upload Video 
-              <button onClick={onClose} className='text-xl font-bold '>X</button>
-            </CardHeader>
-            <CardContent>
-                <form onSubmit={savevideo}>
-                      <Input type="text" name='title' placeholder='Enter Video Title...' className='border border-gray-400 my-[10px]'  require='Enter Video Title' /><br />
-                      <Input type="text" name='description' placeholder='Enter Video description...' className='border border-gray-400 my-[10px]'  require='Enter Video description' /><br />
-                        <Input type="file" name='thumImage' placeholder='Upload Video ThumImage...' className='border border-gray-400  my-[10px]' accept="image/*" />
-                          <Input type="file" name='video' placeholder='Upload Video...' className='border border-gray-400  my-[10px]' required  accept="video/*" />
-                          <RadioGroup defaultValue="public"  onValueChange={setPublish}>
-                          <div className="flex items-center space-x-2  mt-[10px]">
-                                <RadioGroupItem value="public" id="public"  />
-                                      <label htmlFor="public">Public</label>
-                          </div>
-                          <div className="flex items-center space-x-2 ">
-                                <RadioGroupItem value="private" id="private"   />
-                                      <label htmlFor="private">private</label>
-                          </div>
-                          <div className="flex items-center space-x-2  ">
-                                <RadioGroupItem value="unlisted" id="unlisted"  />
-                                      <label htmlFor="unlisted">Unlisted</label>
-                          </div>
-                          </RadioGroup>
-                          <Button type='submit' className='cursor-pointer'>Video Upload</Button>
-                        
-                       
-                </form>
-            </CardContent>
-
-        </Card>
-      </div>
-      </>
-    )
-  }  */ 

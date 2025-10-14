@@ -7,8 +7,6 @@ export const uploadVideo = async (req, res)=>{
     const {title, description, publish} = req.body
 
 
-   
-
       if(!['private', 'public', 'unlisted'].includes(publish)){
        return res.status(400).json({message : "publish somethings errors!..."})
   }
@@ -82,6 +80,7 @@ export const uploadVideo = async (req, res)=>{
 
 
 export const showvideo = async (req,res)=>{
+//  let backurl = "http://localhost:5000/upload/video";
   try{
     if(req.params.id){
 
@@ -108,7 +107,8 @@ export const showvideo = async (req,res)=>{
       return res.status(200).json({
         status : 1,
         msg : "public video used successfully!...",
-        videos : videos
+        videos : videos,
+      //  backurl
       })
     }
   }
@@ -116,3 +116,7 @@ export const showvideo = async (req,res)=>{
     res.status(500).json({message : "video show problem!..."})
   }
 }
+
+
+
+

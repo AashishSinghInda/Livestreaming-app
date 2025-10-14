@@ -6,15 +6,25 @@ let videoRoutes = express.Router()
 
 let storage = multer.diskStorage({
 
-    //if file.type == image 
+    
     destination : function(req,file,cb){
-        cb(null,"upload/thum")
+        if(file.fieldname === "thumImage"){
+             cb(null,"upload/thum")
+        }
+
+        else if(file.fieldname === "video"){
+            cb(null, "upload/video")
+        }
+       else{
+        cb (new Error("Invalid file field name"))
+       }
     },
     filename:function(req,file,cb){
         cb(null,`${Date.now()}-${file.originalname}`)
 
-}
-})
+}})
+
+   
 
 
 const upload1 = multer({storage : storage})
