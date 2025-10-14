@@ -66,7 +66,7 @@ const SOCKET_URL = 'http://localhost:5000';
       liveVideoRef.current.srcObject = localStream;
     }
    setIsModalOpen(false);
-  };
+  }
 
 
 
@@ -75,7 +75,7 @@ const SOCKET_URL = 'http://localhost:5000';
     if (!socket) return;
     socket.on('live-started', ({ liveId: id }) => setLiveId(id));
     return () => socket.off('live-started');
-  }, []);
+  },[]);
    
 
 
@@ -84,20 +84,24 @@ const SOCKET_URL = 'http://localhost:5000';
     if (!socket || !localStream || !liveId) return;
     socket.on('viewer-joined', async ({ viewerId, liveId: id }) => {
       if (id !== liveId) return;
+       console.log(`Viewer ${viewerId} joined for live ${id}`); //1
       const peer = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        iceServers: [{ urls: 'stun:stun2.l.google.com:19302' }]
       });
       // Add stream to peer
       localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
+      console.log(`Tracks added to peer for viewer ${viewerId}`);
       // Send ICE candidates
       peer.onicecandidate = (e) => {
         if (e.candidate) {
+          console.log(`Sending ICE candidate to viewer ${viewerId}`);
           socket.emit('ice-candidate', { candidate: e.candidate, liveId: id, viewerId });
         }
       };
       // Create offer and send
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
+      console.log(`Offer created and sent for viewer ${viewerId}`);
       socket.emit('offer', { offer, viewerId, liveId: id });
       peersRef.current.set(viewerId, peer);
     });

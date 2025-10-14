@@ -6,7 +6,7 @@ import { toast, ToastContainer } from "react-toastify";
 import { Card, CardHeader, CardContent } from '@/components/ui/card';
 import io from 'socket.io-client';
 
-const SOCKET_URL = 'http://localhost:5000';
+const SOCKET_URL = 'http://192.168.29.141:5000';
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 
@@ -115,7 +115,14 @@ export default function Home() {
     });
     // Handle remote stream
     peerRef.current.ontrack = (event) => {
-      setRemoteStream(event.streams[0]);
+      console.log(`Remote track received:`, event.streams[0]);
+      if (event.streams[0].getVideoTracks().length > 0) {  
+        setRemoteStream(event.streams[0]);
+      }
+      else {
+        console.error('No video tracks in remote stream');  // एरर लॉग
+        toast.error('No video stream available');
+      }
     };
     // Handle ICE candidates
     peerRef.current.onicecandidate = (event) => {
@@ -123,7 +130,6 @@ export default function Home() {
         socketRef.current.emit('ice-candidate', {
           candidate: event.candidate,
           liveId,
-          streamerId: null // Viewer sends to streamer
         });
       }
     };
