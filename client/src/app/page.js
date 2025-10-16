@@ -12,19 +12,19 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 export default function Home() {
 
- // const apiurl = process.env.NEXT_PUBLIC_API_URL;
-
-//  console.log(apiurl);
+ 
 
   const [videos, setVideos] = useState([])
   const [lives, setLives] = useState([]);
   const [loading, setLoading] = useState(true)
   const [liveModal, setLiveModal] = useState({ open: false, liveId: null });
   const [remoteStream, setRemoteStream] = useState(null);
-  const [backurl, Setbackurl] = useState([]);
+  
 
 
- const videoRef = useRef(null); 
+
+  const videoRef = useRef(null); 
+console.log(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>videoRef",videoRef)
   const socketRef = useRef(null);
   const peerRef = useRef(null);
 
@@ -40,6 +40,7 @@ export default function Home() {
 
          if(finalRes.status === 1){
            setVideos(finalRes.videos ||  []);
+         //   console.log(">>>>>>>>>>>>>>>print",videos)
          //  Setbackurl(response.data.backurl)
 
          if(finalRes.videos?.length === 0){
@@ -75,23 +76,50 @@ export default function Home() {
 
 
 
-    useEffect(() => {
-    socketRef.current = io(SOCKET_URL);
-    // Listen for new live
-    socketRef.current.on('live-started', (data) => {
-      setLives(prev => [...prev, { _id: data.liveId, title: data.title, desc: data.desc, isLive: true }]);
-      toast.success(`New live started: ${data.title}`);
-    });
-    // Listen for live stopped
-    socketRef.current.on('live-stopped', ({ liveId }) => {
-      setLives(prev => prev.filter(live => live._id !== liveId));
-      if (liveModal.liveId === liveId) {  
-       closeLiveModal();
-      }
-        toast.info('Live stream ended.');
-    });
-    return () => socketRef.current?.disconnect();
-  }, []);
+ 
+
+
+
+  useEffect(() => {
+  socketRef.current = io(SOCKET_URL, {
+    transports: ['websocket'], // ensures fast WebSocket connection
+    reconnection: true,        // auto reconnect
+  });
+
+  // Wait for actual connection
+  socketRef.current.on('connect', () => {
+    console.log(' Viewer Socket connected:', socketRef.current.id);
+  });
+
+  socketRef.current.on('connect_error', (err) => {
+    console.error(' Socket connection error:', err.message);
+  });
+
+  socketRef.current.on('disconnect', () => {
+    console.warn(' Viewer Socket disconnected');
+  });
+
+  // Live events
+  socketRef.current.on('live-started', (data) => {
+    setLives(prev => [...prev, { _id: data.liveId, title: data.title, desc: data.desc, isLive: true }]);
+    toast.success(`New live started: ${data.title}`);
+  });
+
+  socketRef.current.on('live-stopped', ({ liveId }) => {
+    setLives(prev => prev.filter(live => live._id !== liveId));
+    if (liveModal.liveId === liveId) {
+      closeLiveModal();
+    }
+    toast.info('Live stream ended.');
+  });
+
+  return () => {
+    socketRef.current.disconnect();
+  };
+}, []);
+
+
+
 
   useEffect(() => {
     fetchVideos();
@@ -106,71 +134,112 @@ export default function Home() {
 
 
 
-   const watchLive = async (liveId) => {
+
+  
+const watchLive = async (liveId) => {
     setLiveModal({ open: true, liveId });
-    socketRef.current.emit('join-live', { liveId }); // Tell backend/streamer
-    // Create peer connection
+    socketRef.current.emit('join-live', { liveId });
     peerRef.current = new RTCPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
-    // Handle remote stream
     peerRef.current.ontrack = (event) => {
-      console.log(`Remote track received:`, event.streams[0]);
-      if (event.streams[0].getVideoTracks().length > 0) {  
-        setRemoteStream(event.streams[0]);
-      }
-      else {
-        console.error('No video tracks in remote stream');  // एरर लॉग
-        toast.error('No video stream available');
-      }
+      console.log('Remote track received:', event.streams[0]);
+      setRemoteStream(event.streams[0]);  // Set the stream
     };
-    // Handle ICE candidates
     peerRef.current.onicecandidate = (event) => {
       if (event.candidate) {
-        socketRef.current.emit('ice-candidate', {
-          candidate: event.candidate,
-          liveId,
-        });
+        socketRef.current.emit('ice-candidate', { candidate: event.candidate, liveId });
       }
     };
-  }
+  };
 
-  // new
-  useEffect(()=>{
-     if (!socketRef.current || !liveModal.open) return;
-    const liveId = liveModal.liveId;
 
-     const handleOffer = async ({ offer, liveId: id }) => {
-      if (id !== liveId) return;
-      if (!peerRef.current) return;
-      await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await peerRef.current.createAnswer();
-      await peerRef.current.setLocalDescription(answer);
-      socketRef.current.emit('answer', { answer, liveId: id });
-    };
 
-    const handleIce = ({ candidate, liveId: id }) => {
-      if (id !== liveId || !candidate || !peerRef.current) return; // FIXED: Changed !== to ===, added checks
-      peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-    };
 
-      socketRef.current.on('offer', handleOffer);
-    socketRef.current.on('ice-candidate', handleIce);
-    // Cleanup on unmount or modal close
-    return () => {
-      socketRef.current.off('offer', handleOffer);
-      socketRef.current.off('ice-candidate', handleIce);
-    };
-  }, [liveModal.open, liveModal.liveId]);
   
 
 
-   useEffect(() =>                                    {
+  useEffect(() => {
+  if (!socketRef.current || !liveModal.open) return;
+  const localLiveId = liveModal.liveId;
+
+  // --- FIX ---: Offer handler: ensure peer exists and liveId matches
+  const handleOffer = async ({ offer, liveId: offeredLiveId }) => {
+    if (offeredLiveId !== localLiveId || !peerRef.current) return;
+    try {
+      // Set remote (broadcaster's) offer
+      await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+      // Create answer (viewer) and send back
+      const answer = await peerRef.current.createAnswer();
+      await peerRef.current.setLocalDescription(answer);
+      socketRef.current.emit('answer', { answer, liveId: offeredLiveId });
+      console.log('Viewer: sent answer for live', offeredLiveId);
+    } catch (err) {
+      console.error('Viewer: error handling offer', err);
+    }
+  };
+
+  // --- FIX ---: ICE candidate handling: must use === to match liveId
+  const handleIce = ({ candidate, liveId: candidateLiveId }) => {
+    if (candidateLiveId !== localLiveId) return;
+    if (!peerRef.current) {
+      console.warn('Viewer: no peer to add ICE candidate to yet');
+      return;
+    }
+    if (!candidate) return;
+    peerRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(err => {
+      console.error('Viewer: failed to add ICE candidate', err);
+    });
+  };
+
+  socketRef.current.on('offer', handleOffer);
+  socketRef.current.on('ice-candidate', handleIce);
+
+  return () => {
+    socketRef.current.off('offer', handleOffer);
+    socketRef.current.off('ice-candidate', handleIce);
+  };
+}, [liveModal.open, liveModal.liveId]);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   useEffect(() =>{
     if (remoteStream && videoRef.current) {
       videoRef.current.srcObject = remoteStream;
-      videoRef.current.play().catch(console.error); // ADDED: Auto-play
+      videoRef.current.playsInline = true;
+      const playVideo = () => {
+        videoRef.current.play().catch(error => {
+          console.error('Error playing video:', error);  
+          if (error.message.includes('interrupted')) {
+            toast.error('Click to play the video (mobile issue)');
+          }
+        });
+      };
+      if (liveModal.open) {
+        playVideo();  
+      }
     }
-  }, [remoteStream]);
+    }, [remoteStream, liveModal.open]);
+
+
+
+
+
   // Close live modal with full cleanup
   const closeLiveModal = () => {
     setLiveModal({ open: false, liveId: null });
@@ -311,10 +380,10 @@ export default function Home() {
         {/* NEW: Live Modal JSX (was missing entirely) */}
         {liveModal.open && (
           <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={closeLiveModal}>
-            <div className="bg-white p-6 w-full max-w-2xl rounded-xl shadow-2xl relative max-h-[80vh] overflow-auto">
+            <div className="bg-white p-6 w-full max-w-2xl rounded-xl shadow-2xl ">
               <button
                 onClick={closeLiveModal}
-                className="absolute top-4 right-4 text-gray-500 hover:text-gray-700 text-2xl"
+                className="absolute top-4 right-4 "
               >
                 &times;
               </button>
@@ -324,13 +393,14 @@ export default function Home() {
                   ref={videoRef}
                   autoPlay
                   muted // Unmute if audio added
+                    playsInline
                   className="w-full h-96 border-2 border-red-500 rounded-lg bg-black"
                 />
+             
                 <div className="absolute top-2 left-2 bg-red-500 text-white px-3 py-1 rounded font-bold">
                   LIVE
                 </div>
               </div>
-                 <p className="text-gray-600 mb-4">Stream may take a few seconds to connect...</p>
               <button
                 onClick={closeLiveModal}
                 className="w-full bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded transition-colors"

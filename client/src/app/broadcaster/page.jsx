@@ -4,7 +4,7 @@
  import io from 'socket.io-client';
  
 
-const SOCKET_URL = 'http://localhost:5000'; 
+const SOCKET_URL = 'http://192.168.29.141:5000'; 
 
   export default function BroadCaster(){
 
@@ -24,10 +24,32 @@ const SOCKET_URL = 'http://localhost:5000';
 
 
 
-     useEffect(() => {
-    socketRef.current = io(SOCKET_URL);
-    return () => socketRef.current?.disconnect();
-  }, []);
+  
+
+
+  useEffect(() => {
+  socketRef.current = io(SOCKET_URL, {
+    transports: ['websocket'], 
+    reconnection: true,
+  });
+
+  socketRef.current.on('connect', () => {
+    console.log('Broadcaster Socket connected :', socketRef.current.id);
+  });
+
+  socketRef.current.on('connect_error', (err) => {
+    console.error('Socket connection error :', err.message);
+  });
+
+  socketRef.current.on('disconnect', () => {
+    console.warn('Socket disconnected.  Trying to reconnect... ');
+  });
+
+  return () => {
+    socketRef.current.disconnect();
+  };
+}, []);
+
 
     const handleGoLive = async ()=>{
       setIsModalOpen(true)
@@ -57,7 +79,8 @@ const SOCKET_URL = 'http://localhost:5000';
       alert(' Please try Go Live again');
       return;
     }
-    socketRef.current.emit('start-live', { title, desc });
+    if(socketRef.current && socketRef.current.connected){
+      socketRef.current.emit('start-live', { title, desc });
     setShowSetup(false);
     setIslive(true);
     setShowLiveSection(true);
@@ -66,7 +89,11 @@ const SOCKET_URL = 'http://localhost:5000';
       liveVideoRef.current.srcObject = localStream;
     }
    setIsModalOpen(false);
+      console.log('Emitting start-live with stream:', localStream.getTracks().length > 0 ? 'Tracks available' : 'No tracks');
   }
+  else{
+    console.error('socket not connected, cannot start live')
+  }}
 
 
 
@@ -79,56 +106,91 @@ const SOCKET_URL = 'http://localhost:5000';
    
 
 
-    useEffect(() => {
-    const socket = socketRef.current;
-    if (!socket || !localStream || !liveId) return;
-    socket.on('viewer-joined', async ({ viewerId, liveId: id }) => {
-      if (id !== liveId) return;
-       console.log(`Viewer ${viewerId} joined for live ${id}`); //1
-      const peer = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun2.l.google.com:19302' }]
-      });
-      // Add stream to peer
-      localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
-      console.log(`Tracks added to peer for viewer ${viewerId}`);
-      // Send ICE candidates
-      peer.onicecandidate = (e) => {
-        if (e.candidate) {
-          console.log(`Sending ICE candidate to viewer ${viewerId}`);
-          socket.emit('ice-candidate', { candidate: e.candidate, liveId: id, viewerId });
-        }
-      };
-      // Create offer and send
-      const offer = await peer.createOffer();
-      await peer.setLocalDescription(offer);
-      console.log(`Offer created and sent for viewer ${viewerId}`);
-      socket.emit('offer', { offer, viewerId, liveId: id });
-      peersRef.current.set(viewerId, peer);
-    });
-    // Handle answers from viewers
-    socket.on('answer', async ({ answer, viewerId, liveId: id }) => {
-      if (id !== liveId) return;
-       const peer = peersRef.current.get(viewerId);
-      if (peer) await peer.setRemoteDescription(new RTCSessionDescription(answer));
-    });
-    // Handle ICE from viewers
-    socket.on('ice-candidate', ({ candidate, viewerId, liveId: id }) => {
-      if (id !== liveId) return;
-      const peer = peersRef.current.get(viewerId);
-      if (peer && candidate) peer.addIceCandidate(new RTCIceCandidate(candidate));
-    });
-    return () => {
-      socket.off('viewer-joined');
-      socket.off('answer');
-      socket.off('ice-candidate');
-    };
-  }, [localStream, liveId]);
-
-
-
+ 
 
 
   useEffect(() => {
+  const socket = socketRef.current;
+  if (!socket || !localStream || !liveId) return;
+
+  // Viewer joined handler (your existing code — keep as-is or use this copy)
+  socket.on('viewer-joined', async ({ viewerId, liveId: joinedLiveId }) => {
+    if (joinedLiveId !== liveId) return;
+    console.log(`Viewer ${viewerId} joined for live ${joinedLiveId}`); 
+    const peer = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    });
+
+    // Add tracks to peer
+    if (localStream.getVideoTracks().length > 0) {
+      localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
+    } else {
+      console.error('No video tracks in localStream! Camera access may be denied.');
+      socket.emit('error', { message: 'No video tracks in broadcaster stream' });
+      return;
+    }
+
+    // Relay ICE candidates to viewer
+    peer.onicecandidate = (e) => {
+      if (e.candidate) {
+        socket.emit('ice-candidate', { candidate: e.candidate, liveId: joinedLiveId, viewerId });
+        console.log('Broadcaster: sent ICE candidate to viewer', viewerId);
+      }
+    };
+
+    try {
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      socket.emit('offer', { offer, viewerId, liveId: joinedLiveId });
+      peersRef.current.set(viewerId, peer);
+      console.log('Broadcaster: offer sent to viewer', viewerId);
+    } catch (error) {
+      console.error('Error creating offer for viewer', viewerId, error);
+    }
+  });
+
+  // --- FIX ---: handle answers with clearer naming & guards
+  socket.on('answer', async ({ answer, viewerId, liveId: answerLiveId }) => {
+    if (answerLiveId !== liveId) return;
+    const peer = peersRef.current.get(viewerId);
+    if (!peer) {
+      console.warn('Broadcaster: no peer found for viewer', viewerId);
+      return;
+    }
+    try {
+      await peer.setRemoteDescription(new RTCSessionDescription(answer));
+      console.log('Broadcaster: set remote description (answer) for viewer', viewerId);
+    } catch (err) {
+      console.error('Broadcaster: failed to set remote description for viewer', viewerId, err);
+    }
+  });
+
+  // --- FIX ---: handle ICE candidates from viewer
+  socket.on('ice-candidate', ({ candidate, viewerId, liveId: candidateLiveId }) => {
+    if (candidateLiveId !== liveId) return;
+    const peer = peersRef.current.get(viewerId);
+    if (!peer) {
+      console.warn('Broadcaster: no peer to add candidate for viewer', viewerId);
+      return;
+    }
+    if (!candidate) return;
+    peer.addIceCandidate(new RTCIceCandidate(candidate)).catch(err => {
+      console.error('Broadcaster: failed to add ICE candidate for viewer', viewerId, err);
+    });
+  });
+
+  return () => {
+    socket.off('viewer-joined');
+    socket.off('answer');
+    socket.off('ice-candidate');
+  };
+}, [localStream, liveId]);
+
+
+
+
+
+useEffect(() => {
   if (previewVideoRef.current && localStream && isModalOpen && showSetup) {
     previewVideoRef.current.srcObject = localStream;
     previewVideoRef.current.play().catch(console.error);
@@ -165,9 +227,10 @@ useEffect(() => {
 
      peersRef.current.forEach(peer => peer.close());
     peersRef.current.clear();
-    if (liveId) socketRef.current.emit('stop-live', { liveId });
+    if (liveId  && socketRef.current && socketRef.current.connected){
+       socketRef.current.emit('stop-live', { liveId });
+  }
     setLocalStream(null);
-
     setIslive(false);
     setShowLiveSection(false);
     setShowSetup(true);
@@ -178,6 +241,7 @@ useEffect(() => {
     if (liveVideoRef.current) liveVideoRef.current.srcObject = null;
      setIsModalOpen(false);
     closeModal();
+    console.log('Live stopped and cleaned up>>>>>>>>>>>>>6');
   };
 
 
