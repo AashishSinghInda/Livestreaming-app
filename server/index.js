@@ -23,7 +23,7 @@ app.use(express.json())
  app.use(
   cors({
     origin: function(origin, callback) {
-      if (!origin || origin === 'https://livestreaming-app-m6xc.vercel.app/' || origin.startsWith('http://192.168.')) {
+      if (!origin || origin === 'https://livestreaming-app-m6xc.vercel.app' || origin.startsWith('http://192.168.')) {
         callback(null, true);  
       } else {
         callback(new Error('Not allowed by CORS'));  
@@ -41,7 +41,7 @@ const server = http.createServer(app)
 const io = new Server(server, {
   cors : {
     origin : function(origin, callback){
-      if(!origin || origin == 'https://livestreaming-app-m6xc.vercel.app/' ||  origin.startsWith('http://192.168.')){
+      if(!origin || origin == 'https://livestreaming-app-m6xc.vercel.app' ||  origin.startsWith('http://192.168.')){
         callback(null, true);
       }
       else{
