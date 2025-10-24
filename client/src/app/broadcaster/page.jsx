@@ -16,9 +16,12 @@ const SOCKET_URL = 'http://192.168.29.141:5000';
     const [showLiveSection, setShowLiveSection] = useState(false)
     const [localStream, setLocalStream] = useState(null);
     const [liveId, setLiveId] = useState(null);
+    const [isScreenSharing, setIsScreenSharing] =useState(false)
+    const [screenStream, setScreenStream] = useState(null)
 
     const previewVideoRef = useRef(null);
-    const liveVideoRef = useRef(null);   
+    const liveVideoRef = useRef(null); 
+      const cameraOverlayRef = useRef(null);  
     const socketRef = useRef(null);
     const peersRef = useRef(new Map());
 
@@ -48,14 +51,14 @@ const SOCKET_URL = 'http://192.168.29.141:5000';
   return () => {
     socketRef.current.disconnect();
   };
-}, []);
+},[]);
 
 
     const handleGoLive = async ()=>{
       setIsModalOpen(true)
 
       try{
-        const stream = await navigator.mediaDevices.getUserMedia({video : {width : 1280, height: 720}, audio : false})
+        const stream = await navigator.mediaDevices.getUserMedia({video : {width : 1280, height: 720}, audio : true})
         setLocalStream(stream)
 
        if(previewVideoRef.current){
@@ -85,7 +88,7 @@ const SOCKET_URL = 'http://192.168.29.141:5000';
     setIslive(true);
     setShowLiveSection(true);
    // setLocalStream(null);
-    if (liveVideoRef.current && localStream) {
+    if (liveVideoRef.current && localStream){
       liveVideoRef.current.srcObject = localStream;
     }
    setIsModalOpen(false);
@@ -114,57 +117,67 @@ const SOCKET_URL = 'http://192.168.29.141:5000';
   if (!socket || !localStream || !liveId) return;
 
   // Viewer joined handler (your existing code — keep as-is or use this copy)
-  socket.on('viewer-joined', async ({ viewerId, liveId: joinedLiveId }) => {
-    if (joinedLiveId !== liveId) return;
-    console.log(`Viewer ${viewerId} joined for live ${joinedLiveId}`); 
-    const peer = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    });
 
-    // Add tracks to peer
-    if (localStream.getVideoTracks().length > 0) {
-      localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
-    } else {
-      console.error('No video tracks in localStream! Camera access may be denied.');
-      socket.emit('error', { message: 'No video tracks in broadcaster stream' });
-      return;
-    }
-
-    // Relay ICE candidates to viewer
-    peer.onicecandidate = (e) => {
-      if (e.candidate) {
-        socket.emit('ice-candidate', { candidate: e.candidate, liveId: joinedLiveId, viewerId });
-        console.log('Broadcaster: sent ICE candidate to viewer', viewerId);
-      }
-    };
-
-    try {
-      const offer = await peer.createOffer();
-      await peer.setLocalDescription(offer);
-      socket.emit('offer', { offer, viewerId, liveId: joinedLiveId });
-      peersRef.current.set(viewerId, peer);
-      console.log('Broadcaster: offer sent to viewer', viewerId);
-    } catch (error) {
-      console.error('Error creating offer for viewer', viewerId, error);
-    }
-  });
-
-  // --- FIX ---: handle answers with clearer naming & guards
   socket.on('answer', async ({ answer, viewerId, liveId: answerLiveId }) => {
-    if (answerLiveId !== liveId) return;
-    const peer = peersRef.current.get(viewerId);
-    if (!peer) {
-      console.warn('Broadcaster: no peer found for viewer', viewerId);
-      return;
-    }
-    try {
-      await peer.setRemoteDescription(new RTCSessionDescription(answer));
-      console.log('Broadcaster: set remote description (answer) for viewer', viewerId);
-    } catch (err) {
-      console.error('Broadcaster: failed to set remote description for viewer', viewerId, err);
-    }
-  });
+  if (answerLiveId !== liveId) return;
+  const peer = peersRef.current.get(viewerId);
+  if (!peer) {
+    console.warn('No peer found for viewer', viewerId);
+    return;
+  }
+  try {
+    await peer.setRemoteDescription(new RTCSessionDescription(answer));
+    console.log('Broadcaster: set remote description from viewer', viewerId);
+  } catch (err) {
+    console.error('Broadcaster: error setting remote description', err);
+  }
+});
 
+
+  socket.on('viewer-joined', async ({ viewerId, liveId: joinedLiveId }) => {
+ if (joinedLiveId !== liveId) {
+    console.warn('viewer-joined for different liveId', joinedLiveId, 'expected', liveId);
+    return;
+  }
+  console.log(`Viewer ${viewerId} joined for live ${joinedLiveId}`);
+
+  const peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+
+  // add camera+mic tracks (ensure tracks exist)
+  if (localStream) {
+    localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
+  } else {
+    console.error('No localStream when viewer joined!');
+    socket.emit('error', { message: 'No broadcaster stream available' });
+    return;
+  }
+
+  // if screen sharing active, add screen track
+  if (screenStream) {
+    const screenTrack = screenStream.getVideoTracks()[0];
+    if (screenTrack) peer.addTrack(screenTrack, screenStream);
+  }
+
+  // forward ICE candidates to viewer
+  peer.onicecandidate = (e) => {
+    if (e.candidate) {
+      socket.emit('ice-candidate', { candidate: e.candidate, liveId: joinedLiveId, viewerId });
+      console.log('Broadcaster: sent ICE candidate to viewer', viewerId);
+    }
+  };
+
+  try {
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+
+    // IMPORTANT: emit offer directly to viewer (server forwards to viewer)
+    socket.emit('offer', { offer, viewerId, liveId: joinedLiveId });
+    peersRef.current.set(viewerId, peer);
+    console.log('Broadcaster: offer sent to viewer', viewerId);
+  } catch (error) {
+    console.error('Error creating offer for viewer', viewerId, error);
+  }
+});
   // --- FIX ---: handle ICE candidates from viewer
   socket.on('ice-candidate', ({ candidate, viewerId, liveId: candidateLiveId }) => {
     if (candidateLiveId !== liveId) return;
@@ -184,7 +197,7 @@ const SOCKET_URL = 'http://192.168.29.141:5000';
     socket.off('answer');
     socket.off('ice-candidate');
   };
-}, [localStream, liveId]);
+}, [localStream, liveId, screenStream]);
 
 
 
@@ -194,11 +207,16 @@ useEffect(() => {
   if (previewVideoRef.current && localStream && isModalOpen && showSetup) {
     previewVideoRef.current.srcObject = localStream;
     previewVideoRef.current.play().catch(console.error);
+     if (cameraOverlayRef.current) {
+        cameraOverlayRef.current.srcObject = localStream;
+        cameraOverlayRef.current.play().catch(() => {});
+      }
   }
   return () => {
     if (previewVideoRef.current) {
       previewVideoRef.current.srcObject = null;
     }
+    if (cameraOverlayRef.current) cameraOverlayRef.current.srcObject = null;
   };
 }, [localStream, isModalOpen, showSetup]);
 
@@ -209,11 +227,18 @@ useEffect(() => {
   if (liveVideoRef.current && localStream && showLiveSection) {
     liveVideoRef.current.srcObject = localStream;
     liveVideoRef.current.play().catch(console.error);
+
+    if (cameraOverlayRef.current) {
+        cameraOverlayRef.current.srcObject = localStream;
+        cameraOverlayRef.current.play().catch(() => {});
+      }
+
   }
   return () => {
     if (liveVideoRef.current) {
       liveVideoRef.current.srcObject = null;
     }
+    if (cameraOverlayRef.current) cameraOverlayRef.current.srcObject = null;
   };
 }, [localStream, showLiveSection]);
 
@@ -223,6 +248,11 @@ useEffect(() => {
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
      // setLocalStream( null);
+    }
+
+
+    if(screenStream){
+      screenStream.getTracks().forEach(t => t.stop());
     }
 
      peersRef.current.forEach(peer => peer.close());
@@ -239,8 +269,10 @@ useEffect(() => {
     setLiveId(null);
     if (previewVideoRef.current) previewVideoRef.current.srcObject = null;
     if (liveVideoRef.current) liveVideoRef.current.srcObject = null;
+      if (cameraOverlayRef.current) cameraOverlayRef.current.srcObject = null;
      setIsModalOpen(false);
-    closeModal();
+      setIsScreenSharing(false);
+       setScreenStream(null);
     console.log('Live stopped and cleaned up>>>>>>>>>>>>>6');
   };
 
@@ -252,13 +284,140 @@ useEffect(() => {
       localStream.getTracks().forEach(track => track.stop());
       setLocalStream(null);
     }
+
+    if(screenStream){
+      screenStream.getTracks().forEach(t => t.stop())
+      setScreenStream(null);
+    }
     if (previewVideoRef.current) previewVideoRef.current.srcObject = null;
+     if (cameraOverlayRef.current) cameraOverlayRef.current.srcObject = null;
     setShowSetup(true);
     setIslive(false);
     setShowLiveSection(false);
     setTitle('');
     setDesc('');
     setLiveId(null);
+    setIsScreenSharing(false);
+  };
+
+
+  // start screen share 
+
+  const handleStartScreenShare = async()=>{
+    if(!localStream){
+      alert('Start camera (Go Live) first so audio is available')
+      return;
+    }
+    try {
+      // getDisplayMedia may or may not include system audio depending on the browser & permissions
+      const sStream = await navigator.mediaDevices.getDisplayMedia({
+         video:{
+          cursor : "always",
+          displaySurface: "monitor"
+       },
+       audio : false
+     } );
+      setScreenStream(sStream);
+      setIsScreenSharing(true);
+
+
+      // Keep camera audio/video available locally
+      const camTrack = localStream.getVideoTracks()[0];
+      const micTracks = localStream.getAudioTracks();
+
+      // Create combined preview stream for broadcaster UI: show screen as main and camera as small overlay using two <video> elements
+      if (previewVideoRef.current) previewVideoRef.current.srcObject = sStream; // main shows screen
+      if (liveVideoRef.current) liveVideoRef.current.srcObject = sStream; // live main shows screen
+      if (cameraOverlayRef.current && camTrack) {
+        // camera overlay will show camera track in small div
+        const camStreamForOverlay = new MediaStream([camTrack, ...micTracks]);
+        cameraOverlayRef.current.srcObject = camStreamForOverlay;
+        cameraOverlayRef.current.play().catch(()=>{});
+      }
+
+      // Notify viewers via socket to expect screen + camera overlay (helps UI toggling)
+      if (socketRef.current && socketRef.current.connected && liveId) {
+        socketRef.current.emit('screen-share-started', { liveId });
+      }
+
+      // For each connected peer: add the screen track so viewers receive both tracks (camera track was already added at start)
+      const screenTrack = sStream.getVideoTracks()[0];
+       peersRef.current.forEach((peer, viewerId) => {
+        const senders = peer.getSenders();
+        const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+        if (videoSender) {
+          // Replace existing camera video with screen
+          videoSender.replaceTrack(screenTrack).then(() => {
+            console.log('Replaced camera with screen for viewer', viewerId);
+            // Add camera as additional track (so viewers get screen first, camera second)
+            peer.addTrack(camTrack, localStream);
+          }).catch(err => console.error('Error replacing track for screen share', err));
+        } else {
+          // Fallback: if no video sender, add screen
+          peer.addTrack(screenTrack, sStream);
+        }
+      });
+
+      // When user stops screen share with browser UI, revert automatically
+      const screenTrackLocal = sStream.getVideoTracks()[0];
+      if (screenTrackLocal) {
+        screenTrackLocal.onended = () => {
+          console.log('Screen share ended by user');
+          handleStopScreenShare();
+        };
+      }
+
+    } catch (err) {
+      console.error('Screen share error', err);
+      alert('Could not start screen sharing: ' + (err.message || err));
+      setIsScreenSharing(false);
+    }
+  }
+
+
+
+
+
+
+
+
+
+
+ // Stop screen sharing and restore camera video to viewers
+  // STOP screen sharing: remove added screen senders and restore preview/live to camera stream
+  
+
+
+
+  const handleStopScreenShare = async () => {
+    if (!isScreenSharing) return;
+    // stop screen local tracks
+    if (screenStream) {
+      screenStream.getTracks().forEach(t => t.stop());
+    }
+    setIsScreenSharing(false);
+    setScreenStream(null);
+    // Revert broadcaster preview/live to camera stream
+    if (previewVideoRef.current && localStream) previewVideoRef.current.srcObject = localStream;
+    if (liveVideoRef.current && localStream) liveVideoRef.current.srcObject = localStream;
+    if (cameraOverlayRef.current && localStream) cameraOverlayRef.current.srcObject = localStream;
+     // FIX: Replace screen sender back to camera, and remove the extra camera sender
+    peersRef.current.forEach((peer, viewerId) => {
+      const senders = peer.getSenders();
+      const videoSenders = senders.filter(s => s.track && s.track.kind === 'video');
+      if (videoSenders.length >= 2) {
+        // Assume first is screen, second is camera (from our addition)
+        videoSenders[0].replaceTrack(localStream.getVideoTracks()[0]).then(() => {
+          console.log('Replaced screen back to camera for viewer', viewerId);
+          // Remove the extra camera sender
+          peer.removeTrack(videoSenders[1]);
+        }).catch(err => console.error('Error replacing back to camera', err));
+      }
+    });
+    // Notify viewers via socket to hide overlay
+    if (socketRef.current && socketRef.current.connected && liveId) {
+      socketRef.current.emit('screen-share-stopped', { liveId });
+    }
   };
 
 
@@ -292,15 +451,43 @@ useEffect(() => {
                   LIVE
                 </div>
               )}
+               {/* NEW: small camera overlay inside broadcaster live view */}
+            <video
+              ref={cameraOverlayRef}
+              autoPlay
+              muted
+              playsInline
+              className="w-28 h-20 rounded-lg border-2 border-white absolute bottom-3 right-3 bg-black"
+              style={{ objectFit: 'cover' }}
+            />
             </div>
+
+
+              <div className='flex gap-3 justify-center mt-4'>
+                {!isScreenSharing ? (
+                  <button
+                  onClick={handleStartScreenShare}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg"
+                  >
+                    Share Screen
+                  </button>
+                ) : (
+                 
+                   <button
+                onClick={handleStopScreenShare}
+                className="bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-2 px-4 rounded-lg"
+              >
+                Stop Sharing
+              </button>
+                )}
             <button
               onClick={handleStopLive}
               className="mt-4 bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-6 rounded-lg transition-colors duration-200">
               Stop Live
             </button>
           </div>
+          </div>
         )}
-      </div>
 
 
 
@@ -333,6 +520,15 @@ useEffect(() => {
                     LIVE
                   </div>
                 )}
+                {/* NEW: small camera overlay inside preview modal */}
+              <video
+                ref={cameraOverlayRef}
+                autoPlay
+                muted
+                playsInline
+                className="w-24 h-16 rounded-lg border-2 border-white absolute bottom-3 right-3 bg-black"
+                style={{ objectFit: 'cover' }}
+              />
               </div>
             
             <div className='flex space-x-3'>
@@ -355,6 +551,7 @@ useEffect(() => {
             </div>
             </div>
       )}
+      </div>
 </>
-    )
-  }
+)
+}

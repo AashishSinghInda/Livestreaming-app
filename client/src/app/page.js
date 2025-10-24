@@ -26,7 +26,9 @@ export default function Home() {
   const videoRef = useRef(null); 
 console.log(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>videoRef",videoRef)
   const socketRef = useRef(null);
+  const cameraOverlayViewerRef = useRef(null);
   const peerRef = useRef(null);
+  
 
 
     const fetchVideos = async ()=>{
@@ -135,71 +137,140 @@ console.log(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>videoRef",videoRef)
 
 
 
-  
 const watchLive = async (liveId) => {
-    setLiveModal({ open: true, liveId });
-    socketRef.current.emit('join-live', { liveId });
-    peerRef.current = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    });
-    peerRef.current.ontrack = (event) => {
-      console.log('Remote track received:', event.streams[0]);
-      setRemoteStream(event.streams[0]);  // Set the stream
-    };
-    peerRef.current.onicecandidate = (event) => {
-      if (event.candidate) {
-        socketRef.current.emit('ice-candidate', { candidate: event.candidate, liveId });
+  setLiveModal({ open: true, liveId });
+  console.log('watchLive -> join-live', liveId);
+
+  // ensure socket exists
+  if (!socketRef.current) {
+    console.error('Socket not initialized!');
+    return;
+  }
+
+  // create RTCPeerConnection
+  peerRef.current = new RTCPeerConnection({
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      // Add TURN config here if you have one:
+      // { urls: 'turn:your.turn.server:3478', username: 'user', credential: 'pass' }
+    ]
+  });
+
+  // prepare two streams: main (screen) and overlay (camera)
+  let mainStream = new MediaStream();
+  let overlayStream = new MediaStream();
+
+  // ontrack -> assign first video -> main, second -> overlay, audio -> main
+  peerRef.current.ontrack = (event) => {
+    try {
+      const track = event.track;
+      console.log('Viewer: got remote track', track.kind, track.id, track.label);
+
+      if (track.kind === 'video') {
+        // if main has no video yet => main, else overlay
+        if (mainStream.getVideoTracks().length === 0) {
+          mainStream.addTrack(track);
+          setRemoteStream(mainStream);
+          if (videoRef.current) {
+            videoRef.current.srcObject = mainStream;
+            videoRef.current.playsInline = true;
+            // IMPORTANT: muted true to allow autoplay. Unmute on user interaction.
+            videoRef.current.muted = true;
+            videoRef.current.play().catch(err => {
+              console.warn('viewer video play error', err);
+            });
+          }
+        } else {
+          overlayStream.addTrack(track);
+          if (cameraOverlayViewerRef.current) {
+            cameraOverlayViewerRef.current.srcObject = overlayStream;
+            cameraOverlayViewerRef.current.playsInline = true;
+            cameraOverlayViewerRef.current.muted = true;
+            cameraOverlayViewerRef.current.play().catch(()=>{});
+          }
+        }
+      } else if (track.kind === 'audio') {
+        mainStream.addTrack(track);
+        if (videoRef.current) videoRef.current.srcObject = mainStream;
       }
-    };
+    } catch (err) {
+      console.error('Error handling remote track', err);
+    }
   };
 
+  // send candidate to server (server will forward to broadcaster)
+  peerRef.current.onicecandidate = (event) => {
+    if (event.candidate) {
+      console.log('Viewer: sending ICE candidate to server', event.candidate);
+      socketRef.current.emit('ice-candidate', { candidate: event.candidate, liveId });
+    }
+  };
 
-
-
+  // Join the live (server will notify broadcaster)
+  socketRef.current.emit('join-live', { liveId });
+};
   
 
 
-  useEffect(() => {
-  if (!socketRef.current || !liveModal.open) return;
-  const localLiveId = liveModal.liveId;
+useEffect(() => {
+  if (!socketRef.current) return;
 
-  // --- FIX ---: Offer handler: ensure peer exists and liveId matches
-  const handleOffer = async ({ offer, liveId: offeredLiveId }) => {
-    if (offeredLiveId !== localLiveId || !peerRef.current) return;
+  // broadcaster will send an offer to this viewer via server:
+  socketRef.current.on('offer', async ({ offer, liveId }) => {
+    console.log('Viewer: received offer for live', liveId);
     try {
-      // Set remote (broadcaster's) offer
+      if (!peerRef.current) {
+        console.warn('Viewer: peer not created yet — creating now.');
+        // create a peer if not created (defensive)
+        peerRef.current = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+
+        // Attach same ontrack & onicecandidate handlers as in watchLive (refactor if needed)
+        peerRef.current.ontrack = (ev) => { /* copy ontrack logic from above */ };
+        peerRef.current.onicecandidate = (ev) => {
+          if (ev.candidate) socketRef.current.emit('ice-candidate', { candidate: ev.candidate, liveId });
+        };
+      }
+
       await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
-      // Create answer (viewer) and send back
       const answer = await peerRef.current.createAnswer();
       await peerRef.current.setLocalDescription(answer);
-      socketRef.current.emit('answer', { answer, liveId: offeredLiveId });
-      console.log('Viewer: sent answer for live', offeredLiveId);
+
+      // Send answer to server => server will forward to broadcaster
+      socketRef.current.emit('answer', { answer, liveId });
+      console.log('Viewer: sent answer for live', liveId);
     } catch (err) {
       console.error('Viewer: error handling offer', err);
     }
-  };
+  });
 
-  // --- FIX ---: ICE candidate handling: must use === to match liveId
-  const handleIce = ({ candidate, liveId: candidateLiveId }) => {
-    if (candidateLiveId !== localLiveId) return;
-    if (!peerRef.current) {
-      console.warn('Viewer: no peer to add ICE candidate to yet');
-      return;
-    }
+  // server may forward ICE candidates coming from broadcaster
+  socketRef.current.on('ice-candidate', ({ candidate, liveId: cid }) => {
+    console.log('Viewer: got ice-candidate from server for live', cid);
     if (!candidate) return;
-    peerRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(err => {
-      console.error('Viewer: failed to add ICE candidate', err);
-    });
-  };
+    if (peerRef.current) {
+      peerRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(err => {
+        console.error('Viewer: failed to add ICE candidate', err);
+      });
+    } else {
+      console.warn('Viewer: peer not ready to add ICE candidate yet');
+    }
+  });
 
-  socketRef.current.on('offer', handleOffer);
-  socketRef.current.on('ice-candidate', handleIce);
+  // optional: server notifies no-broadcaster
+  socketRef.current.on('no-broadcaster', ({ liveId }) => {
+    console.warn('No broadcaster for live', liveId);
+    toast.error('This live is not available right now.');
+    closeLiveModal();
+  });
 
   return () => {
-    socketRef.current.off('offer', handleOffer);
-    socketRef.current.off('ice-candidate', handleIce);
+    socketRef.current.off('offer');
+    socketRef.current.off('ice-candidate');
+    socketRef.current.off('no-broadcaster');
   };
-}, [liveModal.open, liveModal.liveId]);
+}, []);
 
 
 
@@ -207,21 +278,18 @@ const watchLive = async (liveId) => {
 
 
 
+  
 
 
 
 
 
 
-
-
-
-
-
-   useEffect(() =>{
+ useEffect(() =>{
     if (remoteStream && videoRef.current) {
       videoRef.current.srcObject = remoteStream;
       videoRef.current.playsInline = true;
+      videoRef.current.muted = false;
       const playVideo = () => {
         videoRef.current.play().catch(error => {
           console.error('Error playing video:', error);  
@@ -392,7 +460,6 @@ const watchLive = async (liveId) => {
                 <video
                   ref={videoRef}
                   autoPlay
-                  muted // Unmute if audio added
                     playsInline
                   className="w-full h-96 border-2 border-red-500 rounded-lg bg-black"
                 />
@@ -400,6 +467,14 @@ const watchLive = async (liveId) => {
                 <div className="absolute top-2 left-2 bg-red-500 text-white px-3 py-1 rounded font-bold">
                   LIVE
                 </div>
+                 <video
+            ref={cameraOverlayViewerRef}
+            autoPlay
+            muted
+            playsInline
+            className="w-28 h-20 rounded-lg border-2 border-white absolute bottom-3 right-3 bg-black"
+            style={{ objectFit: 'cover' }}
+          />
               </div>
               <button
                 onClick={closeLiveModal}
@@ -414,3 +489,5 @@ const watchLive = async (liveId) => {
     </>
   );
 }
+
+
